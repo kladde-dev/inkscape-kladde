@@ -324,6 +324,8 @@ else()
         INSTALL_COMMAND meson install
     )
     add_library(GLibmm_LIB INTERFACE)
+    # without this, ninja has no ordering constraint and may compile sources needing these headers before glibmm finishes building.
+    add_dependencies(GLibmm_LIB glibmm)
     target_include_directories(GLibmm_LIB INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/deps/include/glibmm-2.68/ ${CMAKE_CURRENT_BINARY_DIR}/deps/lib/glibmm-2.68/include ${CMAKE_CURRENT_BINARY_DIR}/deps/include/giomm-2.68/ ${CMAKE_CURRENT_BINARY_DIR}/deps/lib/giomm-2.68/include)
     target_link_directories(GLibmm_LIB INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/deps/lib)
     target_link_libraries(GLibmm_LIB INTERFACE -lglibmm-2.68)
@@ -345,7 +347,11 @@ else()
         INSTALL_COMMAND meson install
     )
     add_library(GTKmm_LIB INTERFACE)
-    target_include_directories(GTKmm_LIB INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/deps/include/gtkmm-4.0 ${CMAKE_CURRENT_BINARY_DIR}/deps/lib/gtkmm-4.0/include ${CMAKE_CURRENT_BINARY_DIR}/deps/include/gtk-4.0/)
+    # without this, ninja has no ordering constraint and may compile sources needing these headers before gtkmm finishes building.
+    add_dependencies(GTKmm_LIB gtkmm)
+    # gtkmm's tarball also builds gdkmm, whose headers aren't covered by the gtkmm-4.0 paths alone;
+    # gdkmm itself is a static lib linked into libgtkmm-4.0.so, so no separate -lgdkmm is needed.
+    target_include_directories(GTKmm_LIB INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/deps/include/gtkmm-4.0 ${CMAKE_CURRENT_BINARY_DIR}/deps/lib/gtkmm-4.0/include ${CMAKE_CURRENT_BINARY_DIR}/deps/include/gtk-4.0/ ${CMAKE_CURRENT_BINARY_DIR}/deps/include/gdkmm-4.0 ${CMAKE_CURRENT_BINARY_DIR}/deps/lib/gdkmm-4.0/include)
     target_link_directories(GTKmm_LIB INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/deps/lib)
     target_link_libraries(GTKmm_LIB INTERFACE -lgtkmm-4.0 PkgConfig::MM)
     add_library(GTKmm::GTKmm ALIAS GTKmm_LIB)
