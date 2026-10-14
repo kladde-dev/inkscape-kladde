@@ -3,11 +3,13 @@
  * A kladde file that backs a document: every change to the document's XML
  * tree is recorded in the file as it happens, so there is nothing to save.
  *
- * The file holds the XML tree in kladde's XML schema (see schema.h). A
+ * The file holds the XML tree in kladde's typed SVG schema (see schema.h),
+ * whose attributes are typed values wherever they format back exactly. A
  * subtree observer on the document node mirrors every change Inkscape makes
  * to its tree — attribute sets, content changes, insertions, removals and
  * reorderings — into the file, each as one or two records: an attribute set
- * is a splice of the changed middle of its value, a reorder is a `Move`.
+ * parses the new value and records a splice of the changed middle of the
+ * attribute's encoding, a reorder is a `Move`.
  * Long-lived `kladde::Ref`s map Inkscape's nodes to their durable
  * counterparts, so a change deep in the tree finds its place in the file in
  * O(depth · log m).
@@ -60,6 +62,12 @@ public:
 
     /// The store's counters, for measurements.
     kladde::Stats stats() const;
+
+    /// The size of the document's encoding in the file, for measurements.
+    std::size_t encoded_size() const;
+
+    /// The document as the file holds it, for measurements.
+    Element const &root() const;
 
     void notifyChildAdded(XML::Node &node, XML::Node &child, XML::Node *prev) override;
     void notifyChildRemoved(XML::Node &node, XML::Node &child, XML::Node *prev) override;

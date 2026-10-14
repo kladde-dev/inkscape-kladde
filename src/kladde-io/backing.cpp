@@ -10,6 +10,7 @@
 #include <iostream>
 
 #include "document.h"
+#include "kladde-io/svg-values.h"
 #include "xml/node.h"
 #include "xml/simple-document.h"
 #include "xml/text-node.h"
@@ -24,6 +25,28 @@ namespace {
 constexpr double idle_flush_fraction = 0.5;
 
 std::string str(char const *s) { return s ? s : ""; }
+
+/// Replaces the value `m` refers to with `value`, recording only the range
+/// of its encoding between the common prefix and suffix of the old and the
+/// new encoding, as a text's `set` does for its bytes; `Mut::set` records the
+/// whole encoding, which for a path of a thousand segments whose one number
+/// changed is a thousand segments.
+template <class M, class T>
+void assign(M &&m, T value)
+{
+    auto old_bytes = kladde::to_bytes(m.get());
+    auto new_bytes = kladde::to_bytes(value);
+    if (old_bytes == new_bytes) {
+        return;
+    }
+    auto &region = m.region();
+    if (!kladde::check(region.backend(), kladde::splice_changed(region, 0, old_bytes, new_bytes))) {
+        return;
+    }
+    // The handle hands out its value only for reading; the value is ours,
+    // and the store now holds its new encoding.
+    const_cast<T &>(m.get()) = std::move(value);
+}
 
 // ---------------------------------------------------------------- Inkscape -> kladde
 
@@ -53,14 +76,12 @@ Node node_of(XML::Node const &node)
 Element element_of(XML::Node const &node)
 {
     Element e;
-    if (node.type() != XML::NodeType::DOCUMENT_NODE) {
-        e.name = str(node.name());
-    }
-    std::vector<Attribute> attributes;
+    e.name = node.type() == XML::NodeType::DOCUMENT_NODE ? Name(std::string()) : name_of(str(node.name()));
+    std::vector<Attr> attributes;
     for (auto const &a : node.attributeList()) {
-        attributes.push_back({str(g_quark_to_string(a.key)), str(a.value)});
+        attributes.push_back(attribute_of(str(g_quark_to_string(a.key)), str(a.value)));
     }
-    e.attributes = kladde::Vector<Attribute>(std::move(attributes));
+    e.attributes = kladde::Vector<Attr>(std::move(attributes));
     std::vector<Node> children;
     for (auto child = node.firstChild(); child; child = child->next()) {
         children.push_back(node_of(*child));
@@ -73,16 +94,21 @@ Element element_of(XML::Node const &node)
 
 void build_children(XML::Document &doc, XML::Node &parent, Element const &e);
 
+void set_attributes(XML::Node &node, Element const &e)
+{
+    for (auto const &a : e.attributes) {
+        node.setAttribute(std::string(attribute_name(a)), attribute_value(a));
+    }
+}
+
 XML::Node *build_node(XML::Document &doc, Node const &n)
 {
     return std::visit(
         [&](auto const &v) -> XML::Node * {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<V, kladde::Box<Element>>) {
-                auto node = doc.createElement(v->name.c_str());
-                for (auto const &a : v->attributes) {
-                    node->setAttribute(a.name, a.value);
-                }
+                auto node = doc.createElement(qualified_name(v->name).c_str());
+                set_attributes(*node, *v);
                 build_children(doc, *node, *v);
                 return node;
             } else if constexpr (std::is_same_v<V, Text>) {
@@ -239,9 +265,7 @@ std::unique_ptr<SPDocument> Backing::open(std::string const &path)
     }
     auto const &root = file->get();
     auto rdoc = new XML::SimpleDocument();
-    for (auto const &a : root.attributes) {
-        rdoc->setAttribute(a.name, a.value);
-    }
+    set_attributes(*rdoc, root);
     build_children(*rdoc, *rdoc, root);
     if (!rdoc->root() || std::strcmp(rdoc->root()->name(), "svg:svg") != 0) {
         std::cerr << "kladde: " << path << " holds no SVG document" << std::endl;
@@ -287,6 +311,16 @@ void Backing::flush()
 kladde::Stats Backing::stats() const
 {
     return _impl->file.stats();
+}
+
+std::size_t Backing::encoded_size() const
+{
+    return kladde::encoded_len(_impl->file.get());
+}
+
+Element const &Backing::root() const
+{
+    return _impl->file.get();
 }
 
 namespace {
@@ -416,11 +450,11 @@ void Backing::notifyAttributeChanged(XML::Node &node, GQuark name, Util::ptr_sha
                                      Util::ptr_shared new_value)
 {
     record(*_impl, _path, [&] {
-        std::string key = str(g_quark_to_string(name));
+        std::string_view key = g_quark_to_string(name);
         return _impl->with_element(node, [&](kladde::Mut<Element> &el) {
             auto const &attributes = el->attributes;
             std::size_t i = 0;
-            while (i < attributes.size() && attributes[i].name != key) {
+            while (i < attributes.size() && attribute_name(attributes[i]) != key) {
                 ++i;
             }
             auto list = el.attributes();
@@ -429,9 +463,9 @@ void Backing::notifyAttributeChanged(XML::Node &node, GQuark name, Util::ptr_sha
                     list.erase(i);
                 }
             } else if (i < attributes.size()) {
-                list.at(i).value().set(str(new_value));
+                assign(list.at(i), attribute_of(key, new_value.pointer()));
             } else {
-                list.push_back({key, str(new_value)});
+                list.push_back(attribute_of(key, new_value.pointer()));
             }
         });
     });
@@ -441,7 +475,7 @@ void Backing::notifyElementNameChanged(XML::Node &node, GQuark /*old_name*/, GQu
 {
     record(*_impl, _path, [&] {
         return _impl->with_element(node, [&](kladde::Mut<Element> &el) {
-            el.name().set(str(g_quark_to_string(new_name)));
+            assign(el.name(), name_of(str(g_quark_to_string(new_name))));
         });
     });
 }

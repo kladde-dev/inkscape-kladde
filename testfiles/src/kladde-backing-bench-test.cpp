@@ -6,18 +6,21 @@
  *
  * Runs only with KLADDE_SVG_CORPUS set to a directory of .svg files, such as
  * kladde-rs's crates/kladde-svg/corpus/drawings, and prints one line per
- * drawing; it asserts only that the file reopens as the document was.
+ * drawing, followed by how much of the drawing's attributes the schema holds
+ * as typed values; it asserts only that the file reopens as the document was.
  */
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <malloc.h>
+#include <map>
 #include <random>
 
 #include "document.h"
 #include "inkscape.h"
 #include "kladde-io/backing.h"
+#include "kladde-io/svg-values.h"
 #include "xml/document.h"
 #include "xml/node.h"
 #include "xml/repr.h"
@@ -37,6 +40,57 @@ double ms_since(Clock::time_point t)
 std::size_t heap_bytes()
 {
     return mallinfo2().uordblks;
+}
+
+/// How much of a document's attributes the typed schema types.
+struct TypedShare
+{
+    std::size_t attributes = 0;
+    std::size_t typed = 0;
+    /// Typed, with a value other than text (`id`, `class`, `href` and
+    /// `font-family` are typed as text).
+    std::size_t typed_values = 0;
+    std::size_t text_bytes = 0;
+    std::size_t typed_text_bytes = 0;
+    std::size_t declarations = 0;
+    std::size_t typed_declarations = 0;
+    /// Attributes the schema knows by name that are kept verbatim, since
+    /// their value does not format back as written.
+    std::map<std::string, std::size_t> untyped_known;
+};
+
+bool is_text(Kladde::Attr const &a)
+{
+    using K = Kladde::AttrKind;
+    auto k = static_cast<K>(a.index());
+    return k == K::Id || k == K::Class || k == K::Href || k == K::XlinkHref || k == K::FontFamily;
+}
+
+void count(Kladde::Element const &e, TypedShare &share)
+{
+    for (auto const &a : e.attributes) {
+        auto bytes = Kladde::attribute_name(a).size() + Kladde::attribute_value(a).size();
+        ++share.attributes;
+        share.text_bytes += bytes;
+        if (Kladde::is_typed(a)) {
+            ++share.typed;
+            share.typed_text_bytes += bytes;
+            share.typed_values += is_text(a) ? 0 : 1;
+        } else if (auto const &other = std::get<Kladde::Other>(a); Kladde::types_attribute(other.name)) {
+            ++share.untyped_known[other.name];
+        }
+        if (auto style = std::get_if<std::size_t(Kladde::AttrKind::Style)>(&a)) {
+            for (auto const &d : *style) {
+                ++share.declarations;
+                share.typed_declarations += std::holds_alternative<Kladde::Other>(d) ? 0 : 1;
+            }
+        }
+    }
+    for (auto const &child : e.children) {
+        if (auto element = std::get_if<kladde::Box<Kladde::Element>>(&child)) {
+            count(**element, share);
+        }
+    }
 }
 
 void elements_of(XML::Node *node, std::vector<XML::Node *> &out)
@@ -104,7 +158,7 @@ TEST(KladdeBackingBench, Drawings)
     }
     Application::create(false);
     int steps = std::getenv("KLADDE_BENCH_STEPS") ? std::atoi(std::getenv("KLADDE_BENCH_STEPS")) : 10000;
-    std::printf("drawing svg_KB parse_ms doc_heap_KB import_ms import_heap_KB edits plain_edit_us edit_us "
+    std::printf("drawing svg_KB parse_ms doc_heap_KB import_ms import_heap_KB value_KB edits plain_edit_us edit_us "
                 "journal_B_per_edit flushes file_KB closed_KB svg_save_ms reopen_ms\n");
     for (auto const &entry : fs::directory_iterator(corpus)) {
         if (entry.path().extension() != ".svg") {
@@ -134,12 +188,17 @@ TEST(KladdeBackingBench, Drawings)
         ASSERT_NE(backing, nullptr);
         double import_ms = ms_since(t);
         auto import_heap = heap_bytes() - heap0;
+        auto value_size = backing->encoded_size();
+        TypedShare share;
+        count(backing->root(), share);
         auto before = backing->stats();
         std::mt19937 rng(7);
         t = Clock::now();
         edit(*doc, steps, rng);
         double edit_ms = ms_since(t);
         auto after = backing->stats();
+        TypedShare edited;
+        count(backing->root(), edited);
         auto live_file = fs::file_size(path);
         t = Clock::now();
         auto saved = sp_repr_save_buf(doc->getReprDoc());
@@ -152,12 +211,25 @@ TEST(KladdeBackingBench, Drawings)
         double reopen_ms = ms_since(t);
         ASSERT_NE(reopened, nullptr);
         EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
-        std::printf("%s %.0f %.1f %.0f %.1f %.0f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f\n",
+        std::printf("%s %.0f %.1f %.0f %.1f %.0f %.1f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f\n",
                     entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,
-                    doc_heap / 1024.0, import_ms, import_heap / 1024.0, steps, plain_ms * 1000.0 / steps,
+                    doc_heap / 1024.0, import_ms, import_heap / 1024.0, value_size / 1024.0, steps,
+                    plain_ms * 1000.0 / steps,
                     edit_ms * 1000.0 / steps, double(after.journal_bytes - before.journal_bytes) / steps,
                     (unsigned long long)(after.flushes - before.flushes), live_file / 1024.0, closed / 1024.0,
                     save_ms, reopen_ms);
+        auto percent = [](std::size_t part, std::size_t whole) { return whole ? 100.0 * part / whole : 0.0; };
+        std::printf("  typed: %zu attributes, %.1f%% typed (%.1f%% with a value other than text), %.1f%% of their "
+                    "text; %zu style declarations, %.1f%% typed; verbatim though known:",
+                    share.attributes, percent(share.typed, share.attributes),
+                    percent(share.typed_values, share.attributes),
+                    percent(share.typed_text_bytes, share.text_bytes), share.declarations,
+                    percent(share.typed_declarations, share.declarations));
+        for (auto const &[name, n] : share.untyped_known) {
+            std::printf(" %s=%zu", name.c_str(), n);
+        }
+        std::printf("; after the edits, %zu attributes, %.1f%% typed\n", edited.attributes,
+                    percent(edited.typed, edited.attributes));
         reopened.reset();
         fs::remove(path);
     }
