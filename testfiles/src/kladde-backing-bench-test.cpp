@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/** @file
+ * Measures kladde-backed documents on real drawings: importing, editing as a
+ * drawing program edits (drags, style changes, reorders, duplicates and
+ * deletions, through Inkscape's XML tree), closing and reopening.
+ *
+ * Runs only with KLADDE_SVG_CORPUS set to a directory of .svg files, such as
+ * kladde-rs's crates/kladde-svg/corpus/drawings, and prints one line per
+ * drawing; it asserts only that the file reopens as the document was.
+ */
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <gtest/gtest.h>
+#include <malloc.h>
+#include <random>
+
+#include "document.h"
+#include "inkscape.h"
+#include "kladde-io/backing.h"
+#include "xml/document.h"
+#include "xml/node.h"
+#include "xml/repr.h"
+
+using namespace Inkscape;
+namespace fs = std::filesystem;
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+double ms_since(Clock::time_point t)
+{
+    return std::chrono::duration<double, std::milli>(Clock::now() - t).count();
+}
+
+std::size_t heap_bytes()
+{
+    return mallinfo2().uordblks;
+}
+
+void elements_of(XML::Node *node, std::vector<XML::Node *> &out)
+{
+    for (auto c = node->firstChild(); c; c = c->next()) {
+        if (c->type() == XML::NodeType::ELEMENT_NODE) {
+            out.push_back(c);
+            elements_of(c, out);
+        }
+    }
+}
+
+/// A drawing program's edits: mostly drags of one element at a time, each a
+/// run of small transform changes, then style changes, reorders,
+/// duplicates and deletions.
+void edit(SPDocument &doc, int steps, std::mt19937 &rng)
+{
+    auto root = doc.getReprRoot();
+    std::vector<XML::Node *> elements;
+    elements_of(root, elements);
+    auto pick = [&] { return elements[std::uniform_int_distribution<std::size_t>(0, elements.size() - 1)(rng)]; };
+    int done = 0;
+    while (done < steps && !elements.empty()) {
+        auto kind = std::uniform_int_distribution<int>(0, 99)(rng);
+        auto e = pick();
+        if (kind < 80) {
+            // A drag: twenty moves of one element.
+            for (int i = 0; i < 20 && done < steps; ++i, ++done) {
+                auto t = "translate(" + std::to_string(i * 1.25) + "," + std::to_string(i * -0.75) + ")";
+                e->setAttribute("transform", t);
+            }
+        } else if (kind < 90) {
+            e->setAttribute("style", "fill:#" + std::to_string(100000 + done % 899999) + ";stroke:none");
+            ++done;
+        } else if (kind < 94) {
+            if (auto parent = e->parent(); parent && e->prev()) {
+                parent->changeOrder(e, nullptr);
+            }
+            ++done;
+        } else if (kind < 97) {
+            if (auto parent = e->parent(); parent && parent != doc.getReprDoc()) {
+                auto copy = e->duplicate(doc.getReprDoc());
+                parent->appendChild(copy);
+                GC::release(copy);
+            }
+            ++done;
+        } else {
+            if (auto parent = e->parent(); parent && e != root && e->firstChild() == nullptr) {
+                parent->removeChild(e);
+                elements.clear();
+                elements_of(root, elements);
+            }
+            ++done;
+        }
+    }
+}
+
+} // namespace
+
+TEST(KladdeBackingBench, Drawings)
+{
+    auto corpus = std::getenv("KLADDE_SVG_CORPUS");
+    if (!corpus) {
+        GTEST_SKIP() << "KLADDE_SVG_CORPUS is not set";
+    }
+    Application::create(false);
+    int steps = std::getenv("KLADDE_BENCH_STEPS") ? std::atoi(std::getenv("KLADDE_BENCH_STEPS")) : 10000;
+    std::printf("drawing svg_KB parse_ms doc_heap_KB import_ms import_heap_KB edits plain_edit_us edit_us "
+                "journal_B_per_edit flushes file_KB closed_KB svg_save_ms reopen_ms\n");
+    for (auto const &entry : fs::directory_iterator(corpus)) {
+        if (entry.path().extension() != ".svg") {
+            continue;
+        }
+        auto svg = entry.path().string();
+        auto path = (fs::temp_directory_path() / (entry.path().stem().string() + "-bench.kladde")).string();
+        // The same edits without a backing: what Inkscape spends on them.
+        double plain_ms = 0;
+        {
+            auto plain = SPDocument::createNewDoc(svg.c_str());
+            ASSERT_NE(plain, nullptr);
+            std::mt19937 rng(7);
+            auto t0 = Clock::now();
+            edit(*plain, steps, rng);
+            plain_ms = ms_since(t0);
+        }
+        auto heap_doc = heap_bytes();
+        auto t = Clock::now();
+        auto doc = SPDocument::createNewDoc(svg.c_str());
+        ASSERT_NE(doc, nullptr);
+        double parse_ms = ms_since(t);
+        auto doc_heap = heap_bytes() - heap_doc;
+        auto heap0 = heap_bytes();
+        t = Clock::now();
+        auto backing = Kladde::Backing::create(*doc, path);
+        ASSERT_NE(backing, nullptr);
+        double import_ms = ms_since(t);
+        auto import_heap = heap_bytes() - heap0;
+        auto before = backing->stats();
+        std::mt19937 rng(7);
+        t = Clock::now();
+        edit(*doc, steps, rng);
+        double edit_ms = ms_since(t);
+        auto after = backing->stats();
+        auto live_file = fs::file_size(path);
+        t = Clock::now();
+        auto saved = sp_repr_save_buf(doc->getReprDoc());
+        double save_ms = ms_since(t);
+        std::string expected = saved.raw();
+        doc.reset();  // closes the file
+        auto closed = fs::file_size(path);
+        t = Clock::now();
+        auto reopened = Kladde::Backing::open(path);
+        double reopen_ms = ms_since(t);
+        ASSERT_NE(reopened, nullptr);
+        EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
+        std::printf("%s %.0f %.1f %.0f %.1f %.0f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f\n",
+                    entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,
+                    doc_heap / 1024.0, import_ms, import_heap / 1024.0, steps, plain_ms * 1000.0 / steps,
+                    edit_ms * 1000.0 / steps, double(after.journal_bytes - before.journal_bytes) / steps,
+                    (unsigned long long)(after.flushes - before.flushes), live_file / 1024.0, closed / 1024.0,
+                    save_ms, reopen_ms);
+        reopened.reset();
+        fs::remove(path);
+    }
+}
+
+/*
+  Local Variables:
+  mode:c++
+  c-file-style:"stroustrup"
+  c-file-offsets:((innamespace . 0)(inline-open . 0)(case-label . +))
+  indent-tabs-mode:nil
+  fill-column:99
+  End:
+*/
+// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:fileencoding=utf-8:textwidth=99 :

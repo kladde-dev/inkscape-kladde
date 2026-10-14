@@ -58,6 +58,9 @@ public:
     /// Folds the journal into the file now.
     void flush();
 
+    /// The store's counters, for measurements.
+    kladde::Stats stats() const;
+
     void notifyChildAdded(XML::Node &node, XML::Node &child, XML::Node *prev) override;
     void notifyChildRemoved(XML::Node &node, XML::Node &child, XML::Node *prev) override;
     void notifyChildOrderChanged(XML::Node &node, XML::Node &child, XML::Node *old_prev,

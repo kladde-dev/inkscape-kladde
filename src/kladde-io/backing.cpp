@@ -284,6 +284,11 @@ void Backing::flush()
     }
 }
 
+kladde::Stats Backing::stats() const
+{
+    return _impl->file.stats();
+}
+
 namespace {
 
 /// Runs `f`, which records a change; a failure of the disk ends the backing,

@@ -119,6 +119,7 @@ set(TEST_SOURCES
     ui-util-test
     sp-document-test
     kladde-backing-test
+    kladde-backing-bench-test
     object-colors-test
     multi-marker-color-wheel-test
     pixel_align-test
