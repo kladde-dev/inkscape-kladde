@@ -85,6 +85,9 @@ namespace Inkscape {
     }
     class Selection;
     class UndoStackObserver;
+    namespace Kladde {
+        class Backing;
+    }
     namespace XML {
         struct Document;
         class Event;
@@ -182,7 +185,13 @@ public:
     Inkscape::Colors::DocumentCMS &getDocumentCMS() { return *_cms_manager; }
     const Inkscape::Colors::DocumentCMS &getDocumentCMS() const { return *_cms_manager; }
 
+    /// The kladde file that records every change to this document as it
+    /// happens, if any.
+    Inkscape::Kladde::Backing *getKladdeBacking() { return _kladde_backing.get(); }
+    void setKladdeBacking(std::unique_ptr<Inkscape::Kladde::Backing> backing);
+
 private:
+    std::unique_ptr<Inkscape::Kladde::Backing> _kladde_backing;
     void _importDefsNode(SPDocument *source, Inkscape::XML::Node *defs, Inkscape::XML::Node *target_defs);
     SPObject *_activexmltree;
 

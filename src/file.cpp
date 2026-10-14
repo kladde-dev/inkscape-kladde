@@ -74,6 +74,7 @@
 #include "util/recently-used-fonts.h"
 #include "xml/rebase-hrefs.h"
 #include "xml/sp-css-attr.h"
+#include "kladde-io/backing.h"
 
 using Inkscape::DocumentUndo;
 using Inkscape::IO::Resource::TEMPLATES;
@@ -376,6 +377,17 @@ sp_file_save_dialog(Gtk::Window &parentWindow, SPDocument *doc, Inkscape::Extens
 bool
 sp_file_save_document(Gtk::Window &parentWindow, SPDocument *doc)
 {
+    // A kladde-backed document has recorded every change already: saving it
+    // to its kladde file is a flush.
+    if (auto backing = doc->getKladdeBacking()) {
+        auto path = doc->getDocumentFilename();
+        if (!path || backing->path() == path) {
+            backing->flush();
+            doc->setModifiedSinceSave(false);
+            return true;
+        }
+    }
+
     if (auto path = doc->getDocumentFilename()) {
         // Determine the extension from the filename, which may not lead to a valid extension.
         // In which case, we'll fall back to the save-as dialog below.

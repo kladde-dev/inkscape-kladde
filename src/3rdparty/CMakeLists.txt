@@ -11,6 +11,10 @@ endif()
 
 add_subdirectory(libcroco)
 
+# kladde: the durable data structures that back documents.
+set(KLADDE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(kladde-cpp)
+
 if(WITH_INTERNAL_DEPIXELIZE)
     add_subdirectory(libdepixelize)
 endif()

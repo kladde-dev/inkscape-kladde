@@ -118,6 +118,7 @@ set(TEST_SOURCES
     lpe-test
     ui-util-test
     sp-document-test
+    kladde-backing-test
     object-colors-test
     multi-marker-color-wheel-test
     pixel_align-test

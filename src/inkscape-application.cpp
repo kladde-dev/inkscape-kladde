@@ -105,6 +105,8 @@
 #include "ui/tools/shortcuts.h"
 #include "ui/widget/desktop-widget.h"
 #include "util/scope_exit.h"
+#include "kladde-io/backing.h"
+#include "kladde-io/ui.h"
 
 #ifdef WITH_GNU_READLINE
 #include <readline/readline.h>
@@ -170,11 +172,24 @@ std::pair<SPDocument *, bool> InkscapeApplication::document_open(Glib::RefPtr<Gi
         return {nullptr, false};
     }
 
+    // Opening a file of another format in the GUI imports it into a new
+    // kladde file next to it, which records every change from then on.
+    auto path = file->get_path();
+    if (_with_gui && !document->getKladdeBacking() && !path.empty()) {
+        auto [imported, import_cancelled] = Inkscape::Kladde::import(std::move(document), path, get_active_window());
+        if (import_cancelled) {
+            return {nullptr, true};
+        }
+        if (!imported) {
+            return {nullptr, false};
+        }
+        document = std::move(imported);
+    }
+
     document->setVirgin(false); // Prevents replacing document in same window during file open.
 
     // Add/promote recent file; when we call add_item and file is on a recent list already,
     // then apparently only "modified" time changes.
-    auto path = file->get_path();
     // Opening crash files or auto-save files, we can link them back using the
     // recent files manager to get the original context for the file.
     if (auto original = Inkscape::IO::openAsInkscapeRecentOriginalFile(path)) {

@@ -23,3 +23,6 @@
 [submodule "src/3rdparty/capypdf"]
 	path = src/3rdparty/capypdf
 	url = https://github.com/jpakkane/capypdf
+[submodule "src/3rdparty/kladde-cpp"]
+	path = src/3rdparty/kladde-cpp
+	url = https://github.com/kladde-dev/kladde-cpp.git

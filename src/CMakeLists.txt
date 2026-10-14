@@ -225,6 +225,7 @@ add_subdirectory(helper)
 add_subdirectory(include)
 add_subdirectory(inkgc)
 add_subdirectory(io)
+add_subdirectory(kladde-io)
 add_subdirectory(libnrtype)
 add_subdirectory(livarot)
 add_subdirectory(live_effects)
@@ -338,6 +339,7 @@ target_link_libraries(inkscape_base
         Uemf::uemf
         $<$<BOOL:WITH_CAPYPDF>:Inkscape::CapyPDF>
     PUBLIC
+        kladde::kladde
         ${INKSCAPE_LIBS}
         2Geom::2geom
 )

@@ -30,11 +30,29 @@
 #include "ui/dialog/save-template-dialog.h"
 #include "ui/dialog/new-from-template.h"
 #include "ui/icon-names.h"
+#include "desktop.h"
+#include "document.h"
+#include "kladde-io/backing.h"
+#include "kladde-io/ui.h"
 
 void
 document_new(InkscapeWindow* win)
 {
-    sp_file_new_default();
+    // A new document is a kladde file from the start, which records every
+    // change as it is made: ask where it goes first.
+    auto path = Inkscape::Kladde::ask_new_path(win);
+    if (path.empty()) {
+        return;
+    }
+    auto desktop = sp_file_new_default();
+    if (!desktop) {
+        return;
+    }
+    auto doc = desktop->getDocument();
+    if (Inkscape::Kladde::Backing::create(*doc, path)) {
+        doc->setDocumentFilename(path.c_str());
+        doc->setModifiedSinceSave(false);
+    }
 }
 
 void

@@ -46,6 +46,7 @@
 
 #include "3rdparty/libcroco/src/cr-sel-eng.h"
 #include "3rdparty/libcroco/src/cr-selector.h"
+#include "kladde-io/backing.h"
 #include "actions/actions-edit-document.h"
 #include "actions/actions-effect.h"
 #include "actions/actions-pages.h"
@@ -153,7 +154,15 @@ SPDocument::SPDocument()
     _cms_manager = std::make_unique<Inkscape::Colors::DocumentCMS>(this);
 }
 
+void SPDocument::setKladdeBacking(std::unique_ptr<Inkscape::Kladde::Backing> backing)
+{
+    _kladde_backing = std::move(backing);
+}
+
 SPDocument::~SPDocument() {
+    // Stop observing the tree before anything below changes or frees it.
+    _kladde_backing.reset();
+
     destroySignal.emit();
 
     // Prevent page manager from activating itself

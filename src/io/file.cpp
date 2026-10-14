@@ -26,6 +26,7 @@
 #include "extension/input.h"
 #include "object/sp-root.h"
 #include "xml/repr.h"
+#include "kladde-io/backing.h"
 
 /**
  * Create a blank document, remove any template data.
@@ -75,6 +76,11 @@ std::pair<std::unique_ptr<SPDocument>, bool> ink_file_open(Glib::RefPtr<Gio::Fil
 {
     std::unique_ptr<SPDocument> doc;
     std::string path = file->get_path();
+
+    // A kladde file is opened as itself, backed by the file from then on.
+    if (Inkscape::Kladde::is_kladde_path(path)) {
+        return {Inkscape::Kladde::Backing::open(path), false};
+    }
 
     // TODO: It's useless to catch these exceptions here (and below) unless we do something with them.
     //       If we can't properly handle them (e.g. by showing a user-visible message) don't catch them!
