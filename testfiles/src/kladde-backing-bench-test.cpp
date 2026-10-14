@@ -7,10 +7,14 @@
  * Runs only with KLADDE_SVG_CORPUS set to a directory of .svg files, such as
  * kladde-rs's crates/kladde-svg/corpus/drawings, and prints one line per
  * drawing; it asserts only that the file reopens as the document was.
+ * KLADDE_BENCH_STEPS sets the number of edits, KLADDE_JOURNAL_BUDGET_PAGES
+ * fixes the journal budget, and KLADDE_BENCH_SAVE_DIR names a directory to
+ * keep each drawing in, as SVG, as the edits leave it.
  */
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <malloc.h>
 #include <algorithm>
@@ -116,7 +120,13 @@ TEST(KladdeBackingBench, Drawings)
     if (auto budget = std::getenv("KLADDE_JOURNAL_BUDGET_PAGES")) {
         options.journal_budget_pages = static_cast<std::uint32_t>(std::atoi(budget));
     }
-    std::printf("journal budget: %u pages\n", options.journal_budget_pages);
+    // Where to keep each drawing as the edits leave it, as SVG, if anywhere.
+    auto save_dir = std::getenv("KLADDE_BENCH_SAVE_DIR");
+    if (options.journal_budget_pages) {
+        std::printf("journal budget: %u pages\n", *options.journal_budget_pages);
+    } else {
+        std::printf("journal budget: sized to the drawing (budget_pages, after the edits)\n");
+    }
     std::printf("drawing svg_KB parse_ms doc_heap_KB import_ms import_heap_KB edits plain_edit_us edit_us "
                 "journal_B_per_edit flushes file_KB closed_KB svg_save_ms reopen_ms\n");
     for (auto const &entry : fs::directory_iterator(corpus)) {
@@ -164,6 +174,10 @@ TEST(KladdeBackingBench, Drawings)
         auto saved = sp_repr_save_buf(doc->getReprDoc());
         double save_ms = ms_since(t);
         std::string expected = saved.raw();
+        if (save_dir) {
+            std::ofstream(fs::path(save_dir) / entry.path().filename(), std::ios::binary) << expected;
+        }
+        auto budget_pages = options.journal_budget(backing->stats().sequence_bytes);
         doc.reset();  // closes the file
         auto closed = fs::file_size(path);
         t = Clock::now();
@@ -172,12 +186,12 @@ TEST(KladdeBackingBench, Drawings)
         ASSERT_NE(reopened, nullptr);
         EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
         std::printf("%s %.0f %.1f %.0f %.1f %.0f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f "
-                    "live_KB=%.0f drag_p50_us=%.1f p99_us=%.1f p999_us=%.1f max_us=%.0f\n",
+                    "live_KB=%.0f budget_pages=%u drag_p50_us=%.1f p99_us=%.1f p999_us=%.1f max_us=%.0f\n",
                     entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,
                     doc_heap / 1024.0, import_ms, import_heap / 1024.0, steps, plain_ms * 1000.0 / steps,
                     edit_ms * 1000.0 / steps, double(after.journal_bytes - before.journal_bytes) / steps,
                     (unsigned long long)(after.flushes - before.flushes), live_file / 1024.0, closed / 1024.0,
-                    save_ms, reopen_ms, live_kb, quantile(0.5), quantile(0.99), quantile(0.999),
+                    save_ms, reopen_ms, live_kb, budget_pages, quantile(0.5), quantile(0.99), quantile(0.999),
                     latencies.empty() ? 0.0 : latencies.back());
         reopened.reset();
         fs::remove(path);
