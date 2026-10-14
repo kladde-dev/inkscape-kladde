@@ -216,9 +216,9 @@ Backing::~Backing()
     }
 }
 
-Backing *Backing::create(SPDocument &doc, std::string const &path)
+Backing *Backing::create(SPDocument &doc, std::string const &path, kladde::Options const &options)
 {
-    auto file = kladde::File<Element>::create(path, element_of(*doc.getReprDoc()));
+    auto file = kladde::File<Element>::create(path, element_of(*doc.getReprDoc()), options);
     if (!file) {
         std::cerr << "kladde: cannot create " << path << ": " << file.error().what() << std::endl;
         return nullptr;
@@ -230,9 +230,9 @@ Backing *Backing::create(SPDocument &doc, std::string const &path)
     return raw;
 }
 
-std::unique_ptr<SPDocument> Backing::open(std::string const &path)
+std::unique_ptr<SPDocument> Backing::open(std::string const &path, kladde::Options const &options)
 {
-    auto file = kladde::File<Element>::open(path);
+    auto file = kladde::File<Element>::open(path, options);
     if (!file) {
         std::cerr << "kladde: cannot open " << path << ": " << file.error().what() << std::endl;
         return nullptr;
@@ -287,6 +287,11 @@ void Backing::flush()
 kladde::Stats Backing::stats() const
 {
     return _impl->file.stats();
+}
+
+std::size_t Backing::encoded_size() const
+{
+    return kladde::encoded_len(_impl->file.get());
 }
 
 namespace {

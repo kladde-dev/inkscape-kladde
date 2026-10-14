@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <malloc.h>
+#include <algorithm>
 #include <random>
 
 #include "document.h"
@@ -52,6 +53,9 @@ void elements_of(XML::Node *node, std::vector<XML::Node *> &out)
 /// A drawing program's edits: mostly drags of one element at a time, each a
 /// run of small transform changes, then style changes, reorders,
 /// duplicates and deletions.
+/// Where `edit` puts how long each move of a drag took, in µs, if anywhere.
+std::vector<double> *drag_latencies = nullptr;
+
 void edit(SPDocument &doc, int steps, std::mt19937 &rng)
 {
     auto root = doc.getReprRoot();
@@ -66,7 +70,11 @@ void edit(SPDocument &doc, int steps, std::mt19937 &rng)
             // A drag: twenty moves of one element.
             for (int i = 0; i < 20 && done < steps; ++i, ++done) {
                 auto t = "translate(" + std::to_string(i * 1.25) + "," + std::to_string(i * -0.75) + ")";
+                auto t0 = Clock::now();
                 e->setAttribute("transform", t);
+                if (drag_latencies) {
+                    drag_latencies->push_back(ms_since(t0) * 1000.0);
+                }
             }
         } else if (kind < 90) {
             e->setAttribute("style", "fill:#" + std::to_string(100000 + done % 899999) + ";stroke:none");
@@ -104,6 +112,11 @@ TEST(KladdeBackingBench, Drawings)
     }
     Application::create(false);
     int steps = std::getenv("KLADDE_BENCH_STEPS") ? std::atoi(std::getenv("KLADDE_BENCH_STEPS")) : 10000;
+    kladde::Options options;
+    if (auto budget = std::getenv("KLADDE_JOURNAL_BUDGET_PAGES")) {
+        options.journal_budget_pages = static_cast<std::uint32_t>(std::atoi(budget));
+    }
+    std::printf("journal budget: %u pages\n", options.journal_budget_pages);
     std::printf("drawing svg_KB parse_ms doc_heap_KB import_ms import_heap_KB edits plain_edit_us edit_us "
                 "journal_B_per_edit flushes file_KB closed_KB svg_save_ms reopen_ms\n");
     for (auto const &entry : fs::directory_iterator(corpus)) {
@@ -130,15 +143,21 @@ TEST(KladdeBackingBench, Drawings)
         auto doc_heap = heap_bytes() - heap_doc;
         auto heap0 = heap_bytes();
         t = Clock::now();
-        auto backing = Kladde::Backing::create(*doc, path);
+        auto backing = Kladde::Backing::create(*doc, path, options);
         ASSERT_NE(backing, nullptr);
         double import_ms = ms_since(t);
         auto import_heap = heap_bytes() - heap0;
         auto before = backing->stats();
+        auto live_kb = backing->encoded_size() / 1024.0;
         std::mt19937 rng(7);
+        std::vector<double> latencies;
+        drag_latencies = &latencies;
         t = Clock::now();
         edit(*doc, steps, rng);
         double edit_ms = ms_since(t);
+        drag_latencies = nullptr;
+        std::sort(latencies.begin(), latencies.end());
+        auto quantile = [&](double q) { return latencies.empty() ? 0.0 : latencies[std::size_t(q * (latencies.size() - 1))]; };
         auto after = backing->stats();
         auto live_file = fs::file_size(path);
         t = Clock::now();
@@ -148,16 +167,18 @@ TEST(KladdeBackingBench, Drawings)
         doc.reset();  // closes the file
         auto closed = fs::file_size(path);
         t = Clock::now();
-        auto reopened = Kladde::Backing::open(path);
+        auto reopened = Kladde::Backing::open(path, options);
         double reopen_ms = ms_since(t);
         ASSERT_NE(reopened, nullptr);
         EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
-        std::printf("%s %.0f %.1f %.0f %.1f %.0f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f\n",
+        std::printf("%s %.0f %.1f %.0f %.1f %.0f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f "
+                    "live_KB=%.0f drag_p50_us=%.1f p99_us=%.1f p999_us=%.1f max_us=%.0f\n",
                     entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,
                     doc_heap / 1024.0, import_ms, import_heap / 1024.0, steps, plain_ms * 1000.0 / steps,
                     edit_ms * 1000.0 / steps, double(after.journal_bytes - before.journal_bytes) / steps,
                     (unsigned long long)(after.flushes - before.flushes), live_file / 1024.0, closed / 1024.0,
-                    save_ms, reopen_ms);
+                    save_ms, reopen_ms, live_kb, quantile(0.5), quantile(0.99), quantile(0.999),
+                    latencies.empty() ? 0.0 : latencies.back());
         reopened.reset();
         fs::remove(path);
     }

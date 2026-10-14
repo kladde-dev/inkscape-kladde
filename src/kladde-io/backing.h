@@ -45,11 +45,11 @@ public:
     /// Creates (or replaces) the kladde file at `path` holding `doc`'s XML
     /// tree, and backs `doc` with it from now on. Returns null, after telling
     /// the user, if the file cannot be created.
-    static Backing *create(SPDocument &doc, std::string const &path);
+    static Backing *create(SPDocument &doc, std::string const &path, kladde::Options const &options = {});
 
     /// Opens the kladde file at `path` and builds a document from it, backed
     /// by the file. Returns null, after printing why, if it cannot be opened.
-    static std::unique_ptr<SPDocument> open(std::string const &path);
+    static std::unique_ptr<SPDocument> open(std::string const &path, kladde::Options const &options = {});
 
     ~Backing() override;
 
@@ -60,6 +60,9 @@ public:
 
     /// The store's counters, for measurements.
     kladde::Stats stats() const;
+
+    /// The size of the document's encoding in the file, for measurements.
+    std::size_t encoded_size() const;
 
     void notifyChildAdded(XML::Node &node, XML::Node &child, XML::Node *prev) override;
     void notifyChildRemoved(XML::Node &node, XML::Node &child, XML::Node *prev) override;
