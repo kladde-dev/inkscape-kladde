@@ -13,8 +13,9 @@
  * schema knows (`fill`, `d`, `transform`, `style`, ...) is held as a typed
  * value, and any other, or one whose value does not reproduce its text
  * exactly when formatted again, as `Other`, verbatim. So a document reads
- * back byte for byte as Inkscape held it; see svg-values.h for the parsing
- * and formatting.
+ * back byte for byte as Inkscape held it, but for the line breaks of base64
+ * data embedded in a reference, which is held as its bytes; see
+ * svg-values.h for the parsing and formatting.
  *
  * Numbers are decimals, `digits / 10^scale`, rather than binary floats, so
  * that `1.250000` and `1.25` are different values that each format back as
@@ -28,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include <kladde/kladde.hpp>
 
@@ -287,6 +289,25 @@ struct PathData
 };
 KLADDE_STRUCT(PathData, layout, segments)
 
+// ---------------------------------------------------------------- references
+
+/// Data embedded in an IRI as base64, `data:<media>;base64,<text>`, held as
+/// its bytes. How the text was laid out is not kept: it reads back as one
+/// line of base64, however it was cut into lines.
+struct DataUri
+{
+    /// Everything between `data:` and `;base64`, such as `image/png`.
+    std::string media;
+    std::vector<std::uint8_t> data{};
+    friend bool operator==(DataUri const &, DataUri const &) = default;
+};
+KLADDE_STRUCT(DataUri, media, data)
+
+/// The value of `href` or `xlink:href`: a reference, kept as text, or data
+/// embedded in it, kept as its bytes, which take three quarters of their
+/// base64 text.
+using Iri = std::variant<std::string, DataUri>;
+
 // ---------------------------------------------------------------- attributes
 
 /// An attribute, or a declaration of a `style`, kept verbatim: one the
@@ -336,8 +357,8 @@ using Declarations = kladde::Vector<Declaration>;
 #define INKSCAPE_KLADDE_ATTRIBUTES(M)                                                                                  \
     M(Id, "id", std::string)                                                                                           \
     M(Class, "class", std::string)                                                                                     \
-    M(Href, "href", std::string)                                                                                       \
-    M(XlinkHref, "xlink:href", std::string)                                                                            \
+    M(Href, "href", Iri)                                                                                               \
+    M(XlinkHref, "xlink:href", Iri)                                                                                    \
     M(ViewBox, "viewBox", ViewBox)                                                                                     \
     M(X, "x", Length)                                                                                                  \
     M(Y, "y", Length)                                                                                                  \
@@ -442,6 +463,7 @@ KLADDE_STRUCT(Element, name, attributes, children)
 } // namespace Inkscape::Kladde
 
 KLADDE_VARIANT_NAMED(Inkscape::Kladde::Paint, "Paint", (0, "Keyword"), (1, "Color"), (2, "Url"))
+KLADDE_VARIANT_NAMED(Inkscape::Kladde::Iri, "Iri", (0, "Reference"), (1, "Data"))
 KLADDE_VARIANT(Inkscape::Kladde::TransformOp, "TransformOp", 0, 1, 2, 3, 4, 5)
 KLADDE_VARIANT(Inkscape::Kladde::PathSegment, "PathSegment", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 KLADDE_VARIANT_NAMED(Inkscape::Kladde::Name, "Name", (0, "Svg"), (1, "Other"))

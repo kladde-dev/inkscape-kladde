@@ -5,8 +5,11 @@
  *
  * An attribute is typed only if formatting its typed value reproduces its
  * text exactly; anything else is kept verbatim as `Other`. So
- * `attribute_value(attribute_of(name, value)) == value` for every attribute,
- * and a document reads back byte for byte as Inkscape held it.
+ * `attribute_value(attribute_of(name, value)) == value` for every attribute
+ * but one, and a document reads back byte for byte as Inkscape held it. The
+ * exception is data embedded in `href` or `xlink:href` as base64, which is
+ * kept as its bytes and reads back as one line of base64, whatever line
+ * breaks it had.
  */
 #ifndef INKSCAPE_KLADDE_SVG_VALUES_H
 #define INKSCAPE_KLADDE_SVG_VALUES_H

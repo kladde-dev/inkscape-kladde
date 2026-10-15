@@ -11,6 +11,7 @@
 #include "document.h"
 #include "inkscape.h"
 #include "kladde-io/backing.h"
+#include "kladde-io/svg-values.h"
 #include "xml/document.h"
 #include "xml/node.h"
 #include "xml/repr.h"
@@ -118,6 +119,65 @@ TEST_F(KladdeBacking, ReopensAsTheDocumentWasAfterACrash)
     auto reopened = Kladde::Backing::open(crashed);
     ASSERT_NE(reopened, nullptr);
     EXPECT_EQ(serialized(*reopened), serialized(*doc));
+}
+
+TEST_F(KladdeBacking, EmbeddedDataIsKeptAsItsBytesAndReadsBackInOneLine)
+{
+    // Base64 of 3000 bytes, cut into lines of 76 characters as MIME does.
+    std::vector<std::uint8_t> image(3000);
+    for (std::size_t i = 0; i < image.size(); ++i) {
+        image[i] = static_cast<std::uint8_t>(i * 7 + i / 256);
+    }
+    std::string base64;
+    {
+        Kladde::Attr one(std::in_place_index<std::size_t(Kladde::AttrKind::XlinkHref)>,
+                         Kladde::Iri(Kladde::DataUri{"image/png", image}));
+        base64 = Kladde::attribute_value(one).substr(std::string_view("data:image/png;base64,").size());
+    }
+    std::string broken;
+    for (std::size_t at = 0; at < base64.size(); at += 76) {
+        broken += base64.substr(at, 76) + '\n';
+    }
+    auto attr = Kladde::attribute_of("xlink:href", "data:image/png;base64," + broken);
+    auto href = std::get_if<std::size_t(Kladde::AttrKind::XlinkHref)>(&attr);
+    ASSERT_NE(href, nullptr);
+    auto uri = std::get_if<Kladde::DataUri>(href);
+    ASSERT_NE(uri, nullptr);
+    EXPECT_EQ(uri->media, "image/png");
+    EXPECT_EQ(uri->data, image);
+    EXPECT_EQ(Kladde::attribute_value(attr), "data:image/png;base64," + base64);
+    // A reference, and text that is no base64, stay text.
+    for (auto value : {"#gradient", "data:image/png;base64,not base64!", "data:text/plain,hello"}) {
+        auto other = Kladde::attribute_of("xlink:href", value);
+        auto text = std::get_if<std::size_t(Kladde::AttrKind::XlinkHref)>(&other);
+        ASSERT_NE(text, nullptr) << value;
+        EXPECT_TRUE(std::holds_alternative<std::string>(*text)) << value;
+        EXPECT_EQ(Kladde::attribute_value(other), value);
+    }
+
+    auto path = temp_path("kladde-backing-data.kladde");
+    {
+        auto doc = SPDocument::createNewDoc(svg.c_str());
+        ASSERT_NE(doc, nullptr);
+        ASSERT_NE(Kladde::Backing::create(*doc, path), nullptr);
+        auto node = doc->getReprDoc()->createElement("svg:image");
+        node->setAttribute("xlink:href", "data:image/png;base64," + broken);
+        doc->getReprRoot()->appendChild(node);
+        Inkscape::GC::release(node);
+    }
+    auto reopened = Kladde::Backing::open(path);
+    ASSERT_NE(reopened, nullptr);
+    auto root = reopened->getReprRoot();
+    Inkscape::XML::Node const *found = nullptr;
+    for (auto child = root->firstChild(); child; child = child->next()) {
+        if (std::string_view(child->name()) == "svg:image") {
+            found = child;
+        }
+    }
+    ASSERT_NE(found, nullptr);
+    char const *value = found->attribute("xlink:href");
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(std::string(value), "data:image/png;base64," + base64);
 }
 
 TEST_F(KladdeBacking, EditsAfterReopeningAreRecordedToo)

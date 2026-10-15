@@ -64,11 +64,50 @@ struct TypedShare
     std::map<std::string, std::size_t> untyped_known;
 };
 
+/// Saved XML without the line breaks in the base64 of its data URIs, which
+/// a reopened drawing does not keep: they read back as one line.
+std::string without_base64_breaks(std::string const &xml)
+{
+    std::string out;
+    out.reserve(xml.size());
+    constexpr std::string_view marker = ";base64,", br = "&#10;";
+    std::size_t at = 0;
+    while (true) {
+        auto start = xml.find(marker, at);
+        if (start == std::string::npos) {
+            out.append(xml, at);
+            return out;
+        }
+        start += marker.size();
+        out.append(xml, at, start - at);
+        auto end = xml.find('"', start);
+        if (end == std::string::npos) {
+            end = xml.size();
+        }
+        for (auto i = start; i < end;) {
+            if (xml.compare(i, br.size(), br) == 0) {
+                i += br.size();
+            } else if (xml[i] == '\n' || xml[i] == '\r' || xml[i] == ' ' || xml[i] == '\t') {
+                ++i;
+            } else {
+                out += xml[i++];
+            }
+        }
+        at = end;
+    }
+}
+
 bool is_text(Kladde::Attr const &a)
 {
     using K = Kladde::AttrKind;
     auto k = static_cast<K>(a.index());
-    return k == K::Id || k == K::Class || k == K::Href || k == K::XlinkHref || k == K::FontFamily;
+    if (auto href = std::get_if<std::size_t(K::Href)>(&a)) {
+        return std::holds_alternative<std::string>(*href);
+    }
+    if (auto href = std::get_if<std::size_t(K::XlinkHref)>(&a)) {
+        return std::holds_alternative<std::string>(*href);
+    }
+    return k == K::Id || k == K::Class || k == K::FontFamily;
 }
 
 void count(Kladde::Element const &e, TypedShare &share)
@@ -243,7 +282,8 @@ TEST(KladdeBackingBench, Drawings)
         auto reopened = Kladde::Backing::open(path, options);
         double reopen_ms = ms_since(t);
         ASSERT_NE(reopened, nullptr);
-        EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
+        EXPECT_EQ(without_base64_breaks(sp_repr_save_buf(reopened->getReprDoc()).raw()),
+                  without_base64_breaks(expected));
         std::printf("%s %.0f %.1f %.0f %.1f %.0f %.1f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f "
                     "live_KB=%.0f budget_pages=%u drag_p50_us=%.1f p99_us=%.1f p999_us=%.1f max_us=%.0f\n",
                     entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,

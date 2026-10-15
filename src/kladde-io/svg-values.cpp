@@ -414,6 +414,135 @@ void format(std::string const &v, std::string &out) { out += v; }
 
 void format(Other const &v, std::string &out) { out += v.value; }
 
+// ---------------------------------------------------------------- references
+
+constexpr std::string_view base64_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Decodes base64 with padding and without line breaks; fails on anything
+/// else. Whether the encoding was canonical is left to formatting it again.
+bool decode_base64(std::string_view s, std::vector<std::uint8_t> &out)
+{
+    static auto const values = [] {
+        std::array<std::int8_t, 256> v;
+        v.fill(-1);
+        for (std::size_t i = 0; i < base64_digits.size(); ++i) {
+            v[static_cast<unsigned char>(base64_digits[i])] = static_cast<std::int8_t>(i);
+        }
+        return v;
+    }();
+    if (s.size() % 4 != 0) {
+        return false;
+    }
+    out.clear();
+    out.reserve(s.size() / 4 * 3);
+    for (std::size_t i = 0; i < s.size(); i += 4) {
+        bool last = i + 4 == s.size();
+        std::uint32_t group = 0;
+        int padding = 0;
+        for (std::size_t k = 0; k < 4; ++k) {
+            char c = s[i + k];
+            if (c == '=' && last && k >= 2 && (k == 3 || s[i + 3] == '=')) {
+                ++padding;
+                group <<= 6;
+                continue;
+            }
+            auto v = values[static_cast<unsigned char>(c)];
+            if (v < 0 || padding > 0) {
+                return false;
+            }
+            group = (group << 6) | static_cast<std::uint32_t>(v);
+        }
+        out.push_back(static_cast<std::uint8_t>(group >> 16));
+        if (padding < 2) {
+            out.push_back(static_cast<std::uint8_t>(group >> 8));
+        }
+        if (padding < 1) {
+            out.push_back(static_cast<std::uint8_t>(group));
+        }
+    }
+    return true;
+}
+
+void encode_base64(std::vector<std::uint8_t> const &data, std::string &out)
+{
+    std::size_t i = 0;
+    for (; i + 3 <= data.size(); i += 3) {
+        std::uint32_t group = (std::uint32_t{data[i]} << 16) | (std::uint32_t{data[i + 1]} << 8) | data[i + 2];
+        for (int shift = 18; shift >= 0; shift -= 6) {
+            out += base64_digits[(group >> shift) & 63];
+        }
+    }
+    if (std::size_t rest = data.size() - i) {
+        std::uint32_t group = std::uint32_t{data[i]} << 16;
+        if (rest == 2) {
+            group |= std::uint32_t{data[i + 1]} << 8;
+        }
+        out += base64_digits[(group >> 18) & 63];
+        out += base64_digits[(group >> 12) & 63];
+        out += rest == 2 ? base64_digits[(group >> 6) & 63] : '=';
+        out += '=';
+    }
+}
+
+void format(DataUri const &v, std::string &out)
+{
+    out += "data:";
+    out += v.media;
+    out += ";base64,";
+    encode_base64(v.data, out);
+}
+
+/// `data:<media>;base64,<text>` as its bytes, if `text` is base64, however
+/// it is cut into lines.
+std::optional<DataUri> data_uri(std::string_view s)
+{
+    constexpr std::string_view scheme = "data:", base64 = ";base64";
+    if (s.substr(0, scheme.size()) != scheme) {
+        return std::nullopt;
+    }
+    auto comma = s.find(',');
+    if (comma == std::string_view::npos) {
+        return std::nullopt;
+    }
+    auto header = s.substr(scheme.size(), comma - scheme.size());
+    if (header.size() < base64.size() || header.substr(header.size() - base64.size()) != base64) {
+        return std::nullopt;
+    }
+    DataUri uri;
+    uri.media = header.substr(0, header.size() - base64.size());
+    auto body = s.substr(comma + 1);
+    std::string text;
+    text.reserve(body.size());
+    for (char c : body) {
+        if (c != '\n' && c != '\r' && c != ' ' && c != '\t') {
+            text += c;
+        }
+    }
+    if (!decode_base64(text, uri.data)) {
+        return std::nullopt;
+    }
+    return uri;
+}
+
+bool parse(std::string_view s, Iri &v)
+{
+    if (auto uri = data_uri(s)) {
+        v = std::move(*uri);
+    } else {
+        v = std::string(s);
+    }
+    return true;
+}
+
+void format(Iri const &v, std::string &out)
+{
+    if (auto uri = std::get_if<DataUri>(&v)) {
+        format(*uri, out);
+    } else {
+        out += std::get<std::string>(v);
+    }
+}
+
 // ---------------------------------------------------------------- transforms
 
 bool parse(std::string_view s, Transforms &transforms)
@@ -788,8 +917,18 @@ void format(PathData const &d, std::string &out)
 bool parse(std::string_view s, Declarations &decls);
 void format(Declarations const &decls, std::string &out);
 
+/// Whether a typed value must format back as its text was written to be
+/// kept: every one but embedded data, whose base64 reads back in one line.
+template <class T>
+bool must_reproduce(T const &)
+{
+    return true;
+}
+
+bool must_reproduce(Iri const &v) { return !std::holds_alternative<DataUri>(v); }
+
 /// Alternative `I` of `V` holding `value`, if it parses as one and formats
-/// back exactly.
+/// back exactly, or is embedded data.
 template <class V, std::size_t I>
 std::optional<V> typed(std::string_view value)
 {
@@ -798,11 +937,13 @@ std::optional<V> typed(std::string_view value)
     if (!parse(value, t)) {
         return std::nullopt;
     }
-    std::string text;
-    text.reserve(value.size());
-    format(t, text);
-    if (text != value) {
-        return std::nullopt;
+    if (must_reproduce(t)) {
+        std::string text;
+        text.reserve(value.size());
+        format(t, text);
+        if (text != value) {
+            return std::nullopt;
+        }
     }
     return V(std::in_place_index<I>, std::move(t));
 }
