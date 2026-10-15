@@ -13,7 +13,8 @@ It demonstrates [kladde](https://kladde-dev.github.io/), a file format and libra
 A drawing lives in a `.kladde` file, which Inkscape keeps up to date as you edit.
 Each change to the document's XML tree — a drag, a style change, a reordering, a new or deleted object — is written to the file as a few bytes in a journal, so a crash, a power cut or closing the window loses nothing.
 From time to time, while you pause, the journal is folded into the file's pages.
-Neither step ever rewrites the whole drawing, so the cost of an edit does not grow with the size of the drawing.
+Neither step rewrites the whole drawing, so the cost of an edit does not grow with the size of the drawing.
+Closing the drawing does rewrite it, once: the file is replaced by the smallest file that holds the drawing, which is written beside it and then renamed over it, so that a crash while closing loses nothing either.
 
 - **File ▸ New** asks where the new drawing's `.kladde` file goes.
 - **Opening a `.kladde` file** continues where the last session left off.

@@ -235,7 +235,9 @@ Backing::~Backing()
     }
     if (!_impl->failed) {
         try {
-            _impl->file.close();
+            // An ordinary close, which a crash never gets to: the file is
+            // replaced by the smallest file that holds the drawing.
+            _impl->file.close_consolidated();
         } catch (kladde::exception const &e) {
             std::cerr << "kladde: closing " << _path << " failed: " << e.what() << std::endl;
         }

@@ -237,7 +237,10 @@ TEST(KladdeBackingBench, Drawings)
             std::ofstream(fs::path(save_dir) / entry.path().filename(), std::ios::binary) << expected;
         }
         auto budget_pages = options.journal_budget(backing->stats().sequence_bytes);
+        auto edited_size = backing->encoded_size();
+        t = Clock::now();
         doc.reset();  // closes the file
+        double close_ms = ms_since(t);
         auto closed = fs::file_size(path);
         t = Clock::now();
         auto reopened = Kladde::Backing::open(path, options);
@@ -245,13 +248,14 @@ TEST(KladdeBackingBench, Drawings)
         ASSERT_NE(reopened, nullptr);
         EXPECT_EQ(sp_repr_save_buf(reopened->getReprDoc()).raw(), expected);
         std::printf("%s %.0f %.1f %.0f %.1f %.0f %.1f %d %.2f %.2f %.1f %llu %.0f %.0f %.1f %.1f "
-                    "live_KB=%.0f budget_pages=%u drag_p50_us=%.1f p99_us=%.1f p999_us=%.1f max_us=%.0f\n",
+                    "live_KB=%.0f edited_KB=%.0f close_ms=%.1f budget_pages=%u drag_p50_us=%.1f p99_us=%.1f "
+                    "p999_us=%.1f max_us=%.0f\n",
                     entry.path().stem().c_str(), fs::file_size(entry.path()) / 1024.0, parse_ms,
                     doc_heap / 1024.0, import_ms, import_heap / 1024.0, value_size / 1024.0, steps,
                     plain_ms * 1000.0 / steps,
                     edit_ms * 1000.0 / steps, double(after.journal_bytes - before.journal_bytes) / steps,
                     (unsigned long long)(after.flushes - before.flushes), live_file / 1024.0, closed / 1024.0,
-                    save_ms, reopen_ms, live_kb, budget_pages, quantile(0.5), quantile(0.99), quantile(0.999),
+                    save_ms, reopen_ms, live_kb, edited_size / 1024.0, close_ms, budget_pages, quantile(0.5), quantile(0.99), quantile(0.999),
                     latencies.empty() ? 0.0 : latencies.back());
         auto percent = [](std::size_t part, std::size_t whole) { return whole ? 100.0 * part / whole : 0.0; };
         std::printf("  typed: %zu attributes, %.1f%% typed (%.1f%% with a value other than text), %.1f%% of their "
