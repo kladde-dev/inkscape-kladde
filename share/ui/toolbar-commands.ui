@@ -41,21 +41,6 @@
         <property name="focusable">True</property>
         <property name="focus-on-click">False</property>
         <property name="receives-default">True</property>
-        <property name="tooltip-text" translatable="yes">Save</property>
-        <property name="action-name">win.document-save</property>
-        <property name="has-frame">False</property>
-        <property name="icon-name">document-save</property>
-        <style>
-            <class name="priority1"/>
-        </style>
-      </object>
-    </child>
-    <child>
-      <object class="GtkButton">
-        <property name="valign">center</property>
-        <property name="focusable">True</property>
-        <property name="focus-on-click">False</property>
-        <property name="receives-default">True</property>
         <property name="tooltip-text" translatable="yes">Print...</property>
         <property name="action-name">win.document-print</property>
         <property name="has-frame">False</property>

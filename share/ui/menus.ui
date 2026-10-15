@@ -26,11 +26,6 @@
       </submenu>
       <section>
         <item>
-          <attribute name="label" translatable="yes">_Save</attribute>
-          <attribute name="action">win.document-save</attribute>
-          <attribute name="icon">document-save</attribute>
-        </item>
-        <item>
           <attribute name="label" translatable="yes">Save _As...</attribute>
           <attribute name="action">win.document-save-as</attribute>
           <attribute name="icon">document-save-as</attribute>

@@ -18,7 +18,8 @@ Neither step ever rewrites the whole drawing, so the cost of an edit does not gr
 - **File ▸ New** asks where the new drawing's `.kladde` file goes.
 - **Opening a `.kladde` file** continues where the last session left off.
 - **Opening an SVG (or any other format Inkscape reads)** imports it into a new `.kladde` file next to it, and leaves the original file untouched.
-- **File ▸ Save** only makes sure that everything is folded into the file's pages; **File ▸ Save As** still writes SVG, to export the drawing.
+- **There is no Save** in the File menu or the commands bar; Ctrl+S still works and only makes sure that everything is folded into the file's pages.
+  **File ▸ Save As** and **Save a Copy** still write SVG, to export the drawing.
 
 The drawing is stored in a schema of kladde's durable data types: elements with their attributes and children, mirroring Inkscape's XML tree.
 The branch `main` stores attribute values as typed values wherever they format back exactly (numbers, lengths, colours, transforms, path data, style declarations); the branch `untyped` stores every attribute value as a string.
